@@ -40,6 +40,7 @@ No light blocks. No chunk relights. The cone is computed **inside the game's cor
 - **Blocked by walls** — a 48³ voxel map around the camera is ray-marched (DDA) per pixel; soft penumbra from three jittered rays, entities cast soft sphere shadows, and the beam *dissolves* vanilla shadow circles it hits.
 - **Multiplayer-native** — up to four beams at once; everyone sees everyone's light, zoom level included.
 - **Blinding** — glare is physics, not a sprite: its strength equals the actual cone intensity at *your* eyes, traced past blocks and mobs. Look into a lens up close and the screen whites out.
+- **Sodium-ready** — with Sodium installed the beam is injected straight into its terrain shaders. Same light, same shadows, Sodium speed.
 
 <img src="images/divider-beam.png" alt="" width="100%">
 
@@ -50,6 +51,8 @@ No light blocks. No chunk relights. The cone is computed **inside the game's cor
 3. Run **Java 25**.
 4. Drop the jar into `mods` — on the client *and* the server (items and batteries are real).
 5. Pairs best with **[Enhanced Darkness](https://github.com/EntonioDMI/enhanced-darkness)**.
+
+> ⚠️ Iris shaderpacks replace the game's shaders entirely — with a pack enabled the beam won't light terrain. Sodium alone works out of the box.
 
 <img src="images/divider-batteries.png" alt="" width="100%">
 

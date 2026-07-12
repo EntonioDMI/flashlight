@@ -14,3 +14,16 @@ run/
 .project
 .settings/
 bin/
+
+# Local-only: сырые ассеты и шпаргалки — в репозиторий не попадают
+# (только корень! звуки мода в src/main/resources — настоящие ассеты)
+/*.mp3
+/*.wav
+/*.ogg
+/MODRINTH.md
+/libs/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
