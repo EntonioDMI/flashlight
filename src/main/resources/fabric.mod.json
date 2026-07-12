@@ -1,0 +1,34 @@
+{
+	"schemaVersion": 1,
+	"id": "flashlight",
+	"version": "${version}",
+	"name": "Flashlight",
+	"description": "Ручные фонари для horror-паков: маленький фонарик и большой рабочий фонарь. Батарейки-расходники, перезарядка как reload у оружия, реальный свет, который останавливается о стены и влияет на спавн мобов.",
+	"authors": [
+		"sivren"
+	],
+	"contact": {
+		"homepage": "https://github.com/EntonioDMI/flashlight",
+		"sources": "https://github.com/EntonioDMI/flashlight",
+		"issues": "https://github.com/EntonioDMI/flashlight/issues"
+	},
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"dev.sivren.flashlight.Flashlight"
+		],
+		"client": [
+			"dev.sivren.flashlight.client.FlashlightClient"
+		]
+	},
+	"mixins": [
+		"flashlight.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "${minecraft_dep}",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

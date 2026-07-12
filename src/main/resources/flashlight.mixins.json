@@ -1,0 +1,17 @@
+{
+	"required": true,
+	"package": "dev.sivren.flashlight.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"mixins": [],
+	"client": [
+		"client.ChunkSectionsToRenderMixin",
+		"client.GameRendererMixin",
+		"client.ItemInHandRendererMixin",
+		"client.MouseHandlerMixin",
+		"client.QuadParticleRenderStateMixin",
+		"client.RenderTypeMixin"
+	]
+}

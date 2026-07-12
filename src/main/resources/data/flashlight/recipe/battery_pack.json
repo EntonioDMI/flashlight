@@ -1,0 +1,18 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"pattern": [
+		"CLC",
+		"CRC",
+		" G "
+	],
+	"key": {
+		"C": "minecraft:copper_ingot",
+		"L": "minecraft:lapis_lazuli",
+		"R": "minecraft:redstone",
+		"G": "minecraft:gold_ingot"
+	},
+	"result": {
+		"id": "flashlight:battery_pack",
+		"count": 1
+	}
+}
