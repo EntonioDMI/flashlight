@@ -94,6 +94,11 @@ public final class VoxelOccluder {
         return textureView;
     }
 
+    /** Сырая текстура атласа (Sodium-компат биндит её raw GL-ем) или null. */
+    public static GpuTexture texture() {
+        return texture;
+    }
+
     public static GpuSampler sampler() {
         return sampler;
     }

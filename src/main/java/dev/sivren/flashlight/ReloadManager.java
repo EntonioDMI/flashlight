@@ -87,6 +87,9 @@ public final class ReloadManager {
             if (!(stack.getItem() instanceof FlashlightItem flashlight)
                     || !FlashlightItem.isReloading(stack)) {
                 // Переключил предмет / выбросил — отмена (батарейка уже потрачена).
+                // ВАЖНО: снять RELOADING со стека, куда бы он ни уехал, иначе
+                // фонарик навсегда зависает в анимации перезарядки.
+                clearReloadingEverywhere(player);
                 it.remove();
                 continue;
             }
@@ -97,6 +100,22 @@ public final class ReloadManager {
                 player.level().playSound(null, player.blockPosition(),
                         SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 0.4f, 1.3f);
                 it.remove();
+            }
+        }
+    }
+
+    /** Есть ли активная перезарядка у игрока (для самолечения зависших стеков). */
+    public static boolean isPending(Player player) {
+        return PENDING.containsKey(player.getUUID());
+    }
+
+    /** Снимает флаг RELOADING со всех фонарей в инвентаре игрока. */
+    public static void clearReloadingEverywhere(Player player) {
+        Inventory inventory = player.getInventory();
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack slot = inventory.getItem(i);
+            if (slot.getItem() instanceof FlashlightItem && FlashlightItem.isReloading(slot)) {
+                slot.remove(ModComponents.RELOADING);
             }
         }
     }

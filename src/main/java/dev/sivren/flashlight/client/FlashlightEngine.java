@@ -77,6 +77,7 @@ public final class FlashlightEngine {
     private static final int UBO_SIZE = 64 + 16 + MAX_LIGHTS * 3 * 16 + 32 + MAX_SPHERES * 16;
 
     private static GpuBuffer ubo;
+    private static boolean uboHasData = false;
     private static boolean compiled = false;
     private static final ByteBuffer SCRATCH = ByteBuffer.allocateDirect(UBO_SIZE).order(ByteOrder.nativeOrder());
 
@@ -140,7 +141,11 @@ public final class FlashlightEngine {
         }
 
         // Ни одного горящего фонаря — рендерим ванилью (ноль накладных расходов).
+        // Патченый шейдер Sodium читает UBO всегда — гасим счётчик явно.
         if (beams.isEmpty()) {
+            if (uboHasData) {
+                zeroUbo();
+            }
             active = false;
             return;
         }
@@ -221,6 +226,7 @@ public final class FlashlightEngine {
 
         SCRATCH.position(0).limit(UBO_SIZE);
         RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), SCRATCH);
+        uboHasData = true;
         active = true;
     }
 
@@ -321,6 +327,28 @@ public final class FlashlightEngine {
     }
 
     /**
+     * UBO для Sodium-компата: шейдер Sodium ссылается на блок безусловно,
+     * поэтому буфер должен существовать (хотя бы занулённый) с первого кадра.
+     */
+    public static GpuBuffer uboForCompat() {
+        if (ubo == null) {
+            ensureResources();
+        }
+        return ubo;
+    }
+
+    /** Обнуляет UBO (счётчик лучей = 0) — свет выключен для всех шейдеров. */
+    private static void zeroUbo() {
+        SCRATCH.clear();
+        for (int i = 0; i < UBO_SIZE; i += 8) {
+            SCRATCH.putLong(0L);
+        }
+        SCRATCH.position(0).limit(UBO_SIZE);
+        RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), SCRATCH);
+        uboHasData = false;
+    }
+
+    /**
      * Просадка яркости на разряженной батарее: ниже 20% заряда фонарь
      * заметно тускнеет (до ~25% силы на последних секундах).
      */
@@ -415,6 +443,7 @@ public final class FlashlightEngine {
         if (ubo == null) {
             ubo = device.createBuffer(() -> "FlashLights UBO",
                     GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, UBO_SIZE);
+            zeroUbo(); // содержимое нового буфера не определено — гасим сразу
         }
         if (!compiled) {
             device.precompilePipeline(FL_SOLID);

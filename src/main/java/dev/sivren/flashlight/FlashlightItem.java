@@ -86,7 +86,12 @@ public class FlashlightItem extends Item {
         ItemStack stack = player.getItemInHand(hand);
         if (!level.isClientSide()) {
             if (isReloading(stack)) {
-                return InteractionResult.CONSUME;
+                if (ReloadManager.isPending(player)) {
+                    return InteractionResult.CONSUME; // честная перезарядка идёт
+                }
+                // Самолечение: флаг завис без активной перезарядки (старый баг
+                // со свапом слота) — снимаем и работаем как обычный тумблер.
+                stack.remove(ModComponents.RELOADING);
             }
             if (isOn(stack)) {
                 stack.remove(ModComponents.ON);

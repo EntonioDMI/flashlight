@@ -2,6 +2,7 @@
 	"required": true,
 	"package": "dev.sivren.flashlight.mixin",
 	"compatibilityLevel": "JAVA_25",
+	"plugin": "dev.sivren.flashlight.mixin.FlashlightMixinPlugin",
 	"injectors": {
 		"defaultRequire": 1
 	},
@@ -9,9 +10,12 @@
 	"client": [
 		"client.ChunkSectionsToRenderMixin",
 		"client.GameRendererMixin",
+		"client.GlBufferAccessor",
 		"client.ItemInHandRendererMixin",
 		"client.MouseHandlerMixin",
 		"client.QuadParticleRenderStateMixin",
-		"client.RenderTypeMixin"
+		"client.RenderTypeMixin",
+		"client.sodium.SodiumChunkRendererMixin",
+		"client.sodium.SodiumShaderLoaderMixin"
 	]
 }

@@ -14,11 +14,28 @@ loom {
 	}
 }
 
+repositories {
+	exclusiveContent {
+		forRepository {
+			maven {
+				name = "Modrinth"
+				url = "https://api.modrinth.com/maven"
+			}
+		}
+		filter {
+			includeGroup "maven.modrinth"
+		}
+	}
+}
+
 dependencies {
 	// 26.1+ ships deobfuscated (official names) — no `mappings` line.
 	minecraft "com.mojang:minecraft:${minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${loader_version}"
 	implementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+
+	// Sodium — только для компиляции компат-миксинов (26.1+ без ремапа, jar как есть).
+	compileOnly "maven.modrinth:sodium:mc26.1.2-0.9.1-fabric"
 }
 
 processResources {
