@@ -38,4 +38,18 @@ public class GameRendererMixin {
             @Local Matrix4fc modelViewMatrix) {
         GlareRenderer.render(projectionMatrix, modelViewMatrix);
     }
+
+    /**
+     * ПНВ: зелёный post-эффект сразу после мира и руки (там же, где ваниль
+     * гоняет эффекты паука/крипера), до отрисовки GUI.
+     */
+    @Inject(
+            method = "render(Lnet/minecraft/client/DeltaTracker;Z)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/LevelRenderer;doEntityOutline()V",
+                    shift = At.Shift.AFTER))
+    private void flashlight$nvgPost(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
+        dev.sivren.flashlight.client.NvgEffect.render();
+    }
 }

@@ -98,7 +98,7 @@ public final class ReloadManager {
                 stack.set(ModComponents.CHARGE, flashlight.maxCharge());
                 stack.set(ModComponents.ON, true); // щёлкнул батарейку — сразу светим
                 player.level().playSound(null, player.blockPosition(),
-                        SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 0.4f, 1.3f);
+                        ModSounds.FLASHLIGHT_CLICK, SoundSource.PLAYERS, 0.5f, 1.15f);
                 it.remove();
             }
         }
@@ -121,6 +121,9 @@ public final class ReloadManager {
     }
 
     private static boolean consumeBattery(Player player, FlashlightItem flashlight) {
+        if (player.getAbilities().instabuild) {
+            return true; // креатив: перезарядка бесплатная, батарейка не нужна
+        }
         Inventory inventory = player.getInventory();
         for (int i = 0; i < inventory.getContainerSize(); i++) {
             ItemStack slot = inventory.getItem(i);

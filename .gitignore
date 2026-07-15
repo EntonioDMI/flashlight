@@ -22,6 +22,7 @@ bin/
 /*.ogg
 /MODRINTH.md
 /libs/
+/signal_flare_assets/
 
 # OS
 Thumbs.db

@@ -29,9 +29,9 @@ import org.joml.Vector3f;
 /**
  * Движок фонарика v4: конусный свет считается прямо в террейн-шейдере.
  * Пайплайны чанков подменяются на копии с нашим fsh (паттерн Enhanced Darkness),
- * параметры до 4 фонарей едут uniform-буфером и обновляются каждый кадр —
- * мгновенно, с настоящими текстурами (albedo * cone) и видимо всем игрокам:
- * конусы других игроков собираются из их предметов в руках (компоненты
+ * параметры до {@value #MAX_LIGHTS} источников едут uniform-буфером и обновляются
+ * каждый кадр — мгновенно, с настоящими текстурами (albedo * cone) и видимо всем
+ * игрокам: конусы других игроков собираются из их предметов в руках (компоненты
  * синхронизируются ванилью).
  */
 public final class FlashlightEngine {
@@ -71,10 +71,21 @@ public final class FlashlightEngine {
     private static final Identifier ITEM_SHADER = Identifier.fromNamespaceAndPath("flashlight", "core/fl_item");
     private static final Identifier SHADOW_SHADER = Identifier.fromNamespaceAndPath("flashlight", "core/fl_shadow");
 
-    private static final int MAX_LIGHTS = 4;
-    private static final int MAX_SPHERES = 8;
-    /** std140: mat4 + count + 3x4 vec4 огней + 2 vec4 вокселей + 8 vec4 сфер. */
-    private static final int UBO_SIZE = 64 + 16 + MAX_LIGHTS * 3 * 16 + 32 + MAX_SPHERES * 16;
+    // ВНИМАНИЕ: 32/16 продублированы в fl_lights.glsl (размеры массивов UBO и циклы).
+    // Меняешь здесь — меняй и там, иначе std140-упаковка разъедется с шейдером.
+    private static final int MAX_LIGHTS = 32;
+    private static final int MAX_CAPSULES = 16;
+    /**
+     * Лимит источников НА ЧАНК: толпа фонарей/шашек в одном месте не съедает
+     * все слоты UBO — дальние чанки получают свои, и потолок MAX_LIGHTS
+     * на практике не ощущается. Кандидаты уже отсортированы по дистанции,
+     * так что в переполненном чанке выживают ближайшие 4.
+     */
+    private static final int MAX_PER_CHUNK = 4;
+    /** Занятые слоты по чанкам в текущем кадре: ключ ChunkPos.asLong. */
+    private static final java.util.HashMap<Long, Integer> CHUNK_SLOTS = new java.util.HashMap<>();
+    /** std140: mat4 + count + 3x4 vec4 огней + 2 vec4 вокселей + 16x2 vec4 капсул. */
+    private static final int UBO_SIZE = 64 + 16 + MAX_LIGHTS * 3 * 16 + 32 + MAX_CAPSULES * 32;
 
     private static GpuBuffer ubo;
     private static boolean uboHasData = false;
@@ -83,7 +94,9 @@ public final class FlashlightEngine {
 
     // Инерция луча локального игрока: конус плавно догоняет взгляд.
     private static final Vector3f smoothDir = new Vector3f(0, 0, -1);
+    private static final Vector3f lookTarget = new Vector3f();
     private static long lastFrameNanos = 0;
+    private static net.minecraft.client.multiplayer.ClientLevel lastLevel = null;
 
     private FlashlightEngine() {
     }
@@ -91,12 +104,35 @@ public final class FlashlightEngine {
     /** true, если подмена пайплайна активна (буфер готов). */
     public static boolean active = false;
 
+    /**
+     * Полный сброс при выходе из мира: GPU-буфер и воксельный атлас
+     * освобождаются, всё пересоздастся лениво при следующем входе.
+     */
+    public static void reset() {
+        if (ubo != null) {
+            ubo.close();
+            ubo = null;
+        }
+        uboHasData = false;
+        worldBeams = List.of();
+        active = false;
+        lastFrameNanos = 0;
+        lastLevel = null;
+        VoxelOccluder.close();
+    }
+
     /** Вызывается в начале кадра (HEAD GameRenderer.renderLevel). */
     public static void update() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) {
+            worldBeams = List.of();
             active = false;
             return;
+        }
+        if (mc.level != lastLevel) {
+            // Смена измерения/сервера: воксельная сетка прошлого мира — мусор.
+            lastLevel = mc.level;
+            VoxelOccluder.invalidate();
         }
         ensureResources();
 
@@ -109,35 +145,77 @@ public final class FlashlightEngine {
         float dt = lastFrameNanos == 0 ? 0.016f : Math.min((now - lastFrameNanos) / 1.0e9f, 0.1f);
         lastFrameNanos = now;
         float alpha = 1.0f - (float) Math.exp(-dt / 0.09f);
-        smoothDir.lerp(new Vector3f((float) look.x, (float) look.y, (float) look.z), alpha);
+        lookTarget.set((float) look.x, (float) look.y, (float) look.z);
+        smoothDir.lerp(lookTarget, alpha);
         smoothDir.normalize();
 
-        // Собираем до 4 фонарей: локальный игрок + ближайшие игроки с включённым фонарём.
-        record Beam(Vec3 pos, Vector3f dir, FlashlightItem item, float focus, float lowFactor) {
+        // Собираем до MAX_LIGHTS источников: фонари (конусы) + сигнальные шашки
+        // (точечный красный свет: cosOuter < -1 => angular = 1 во все стороны).
+        record Beam(Vec3 pos, Vector3f dir, float[] params, Vector3f color, float bright) {
         }
         List<Beam> beams = new ArrayList<>();
-        List<? extends Player> players = new ArrayList<>(mc.level.players());
-        players.sort(Comparator.comparingDouble(p -> p.position().distanceToSqr(cameraPos)));
+        CHUNK_SLOTS.clear();
+        List<? extends Player> players = mc.level.players();
+        if (players.size() > 1) {
+            // Слоты ограничены — ближние к камере важнее.
+            List<Player> sorted = new ArrayList<>(players);
+            sorted.sort(Comparator.comparingDouble(p -> p.position().distanceToSqr(cameraPos)));
+            players = sorted;
+        }
+        long now0 = System.nanoTime();
         for (Player player : players) {
             if (beams.size() >= MAX_LIGHTS) {
                 break;
             }
             ItemStack litStack = litStack(player);
-            if (litStack == null) {
-                continue;
+            if (litStack != null && reserveChunkSlot(player.position())) {
+                FlashlightItem item = (FlashlightItem) litStack.getItem();
+                float focus = litStack.getOrDefault(dev.sivren.flashlight.ModComponents.FOCUS, 10) / 10.0f;
+                Vec3 lens = lensPos(player, partialTick);
+                Vector3f dir;
+                if (player == mc.player) {
+                    dir = new Vector3f(smoothDir);
+                } else {
+                    Vec3 view = player.getViewVector(partialTick);
+                    dir = new Vector3f((float) view.x, (float) view.y, (float) view.z);
+                }
+                float[] p = beamParams(item, focus);
+                beams.add(new Beam(lens.subtract(cameraPos), dir, p,
+                        new Vector3f(1.0f, 0.96f, 0.86f),
+                        p[3] * lowChargeFactor(litStack, item)));
             }
-            FlashlightItem item = (FlashlightItem) litStack.getItem();
-            float focus = litStack.getOrDefault(dev.sivren.flashlight.ModComponents.FOCUS, 10) / 10.0f;
-            Vec3 lens = lensPos(player, partialTick);
-            Vector3f dir;
-            if (player == mc.player) {
-                dir = new Vector3f(smoothDir);
-            } else {
-                Vec3 view = player.getViewVector(partialTick);
-                dir = new Vector3f((float) view.x, (float) view.y, (float) view.z);
+        }
+        // Один проход по сущностям: горящие шашки (свет) + живые сущности
+        // (капсулы-окклюдеры для силуэтных теней) — вместо двух обходов за кадр.
+        // Капсулы: игроков с горящим фонарём пропускаем — луч рождается в них самих.
+        List<dev.sivren.flashlight.FlareEntity> flares = new ArrayList<>();
+        List<net.minecraft.world.entity.LivingEntity> shadowCasters = new ArrayList<>();
+        for (net.minecraft.world.entity.Entity entity : mc.level.entitiesForRendering()) {
+            if (entity instanceof dev.sivren.flashlight.FlareEntity flare
+                    && flare.position().distanceToSqr(cameraPos) < 96 * 96) {
+                flares.add(flare);
+            } else if (entity instanceof net.minecraft.world.entity.LivingEntity living
+                    && !living.isRemoved()
+                    && !(living instanceof Player player && litStack(player) != null)
+                    && living.position().distanceToSqr(cameraPos) <= 40 * 40) {
+                shadowCasters.add(living);
             }
-            beams.add(new Beam(lens.subtract(cameraPos), dir, item, focus,
-                    lowChargeFactor(litStack, item)));
+        }
+        flares.sort(Comparator.comparingDouble(f -> f.position().distanceToSqr(cameraPos)));
+        for (dev.sivren.flashlight.FlareEntity flare : flares) {
+            if (beams.size() >= MAX_LIGHTS) {
+                break;
+            }
+            if (!reserveChunkSlot(flare.position())) {
+                continue; // в этом чанке уже 4 источника — ближайшие уже светят
+            }
+            // Фаза мерцания своя у каждой шашки (по id сущности).
+            double phase = flare.getId() * 1.7;
+            float flicker = 0.8f + 0.14f * (float) Math.sin(now0 / 9.0e7 + phase)
+                    + 0.06f * (float) Math.sin(now0 / 2.3e7 + phase * 2.0);
+            beams.add(new Beam(flare.position().add(0, 0.25, 0).subtract(cameraPos),
+                    new Vector3f(0, 1, 0), FLARE_PARAMS,
+                    new Vector3f(1.0f, 0.30f, 0.16f), flicker));
         }
 
         // Ни одного горящего фонаря — рендерим ванилью (ноль накладных расходов).
@@ -146,64 +224,53 @@ public final class FlashlightEngine {
             if (uboHasData) {
                 zeroUbo();
             }
+            worldBeams = List.of();
             active = false;
             return;
         }
+
+        // Публикуем лучи в мировых координатах — для подавления ванильной
+        // blob-тени у сущностей, попавших в конус (EntityRenderDispatcherMixin).
+        List<WorldBeam> published = new ArrayList<>(beams.size());
+        for (Beam b : beams) {
+            published.add(new WorldBeam(b.pos().add(cameraPos),
+                    new Vec3(b.dir().x, b.dir().y, b.dir().z), b.params()[0], b.params()[1]));
+        }
+        worldBeams = published;
 
         // std140-упаковка: FlInvView (поворот камеры: view -> camera-relative world).
         SCRATCH.clear();
         org.joml.Matrix4f invView = new org.joml.Matrix4f()
                 .rotation(mc.gameRenderer.getMainCamera().rotation());
         invView.get(SCRATCH);
-        // Сферы-окклюдеры: БЛИЖАЙШИЕ сущности отбрасывают мягкую тень.
-        // Высоким мобам — две сферы (тело+ноги), радиус от ШИРИНЫ, не роста.
-        // Игроков с горящим фонарём пропускаем — их луч рождается внутри них самих.
-        List<net.minecraft.world.entity.LivingEntity> shadowCasters = new ArrayList<>();
-        for (net.minecraft.world.entity.Entity entity : mc.level.entitiesForRendering()) {
-            if (!(entity instanceof net.minecraft.world.entity.LivingEntity living) || living.isRemoved()) {
-                continue;
-            }
-            if (living instanceof Player player && litStack(player) != null) {
-                continue;
-            }
-            if (living.position().distanceToSqr(cameraPos) > 40 * 40) {
-                continue;
-            }
-            shadowCasters.add(living);
-        }
+        // Капсулы-окклюдеры: БЛИЖАЙШИЕ сущности отбрасывают силуэтную тень
+        // (список собран в общем проходе выше). Гуманоидам — вертикальная капсула
+        // по росту, широким мобам (паук) — горизонтальная вдоль поворота тела.
         shadowCasters.sort(Comparator.comparingDouble(e -> e.position().distanceToSqr(cameraPos)));
 
-        List<float[]> spheres = new ArrayList<>(MAX_SPHERES);
+        List<float[]> capsules = new ArrayList<>(MAX_CAPSULES);
         for (net.minecraft.world.entity.LivingEntity living : shadowCasters) {
-            if (spheres.size() >= MAX_SPHERES) {
+            if (capsules.size() >= MAX_CAPSULES) {
                 break;
             }
-            net.minecraft.world.phys.AABB box = living.getBoundingBox();
-            float radius = (float) net.minecraft.util.Mth.clamp(box.getXsize() * 0.5 * 1.05, 0.15, 0.6);
-            double height = box.getYsize();
-            if (height > 1.4 && spheres.size() + 1 < MAX_SPHERES) {
-                addSphere(spheres, box, cameraPos, 0.28, radius);
-                addSphere(spheres, box, cameraPos, 0.74, radius);
-            } else {
-                addSphere(spheres, box, cameraPos, 0.5, radius);
-            }
+            addCapsule(capsules, living, cameraPos, partialTick);
         }
 
         SCRATCH.position(64);
-        SCRATCH.putFloat(beams.size()).putFloat(spheres.size()).putFloat(0).putFloat(0);
+        SCRATCH.putFloat(beams.size()).putFloat(capsules.size()).putFloat(0).putFloat(0);
         for (int i = 0; i < MAX_LIGHTS; i++) {
             if (i < beams.size()) {
                 Beam b = beams.get(i);
-                float[] p = beamParams(b.item(), b.focus());
-                float bright = p[3] * b.lowFactor();
+                float[] p = b.params();
+                float bright = b.bright();
                 SCRATCH.position(80 + i * 16);
                 SCRATCH.putFloat((float) b.pos().x).putFloat((float) b.pos().y)
                         .putFloat((float) b.pos().z).putFloat(p[0]);
                 SCRATCH.position(80 + (MAX_LIGHTS + i) * 16);
                 SCRATCH.putFloat(b.dir().x).putFloat(b.dir().y).putFloat(b.dir().z).putFloat(p[1]);
                 SCRATCH.position(80 + (MAX_LIGHTS * 2 + i) * 16);
-                SCRATCH.putFloat(1.0f * bright).putFloat(0.96f * bright)
-                        .putFloat(0.86f * bright).putFloat(p[2]);
+                SCRATCH.putFloat(b.color().x * bright).putFloat(b.color().y * bright)
+                        .putFloat(b.color().z * bright).putFloat(p[2]);
             }
         }
         // Воксельная окклюзия: держим сетку свежей, пока хоть один фонарь горит.
@@ -216,18 +283,35 @@ public final class FlashlightEngine {
         SCRATCH.putFloat(VoxelOccluder.COLS).putFloat(0).putFloat(0)
                 .putFloat(occlusion ? 1.0f : 0.0f);
 
-        // Сферы сущностей (camera-relative центр + радиус).
-        int spheresBase = 80 + MAX_LIGHTS * 3 * 16 + 32;
-        for (int j = 0; j < spheres.size(); j++) {
-            float[] sphere = spheres.get(j);
-            SCRATCH.position(spheresBase + j * 16);
-            SCRATCH.putFloat(sphere[0]).putFloat(sphere[1]).putFloat(sphere[2]).putFloat(sphere[3]);
+        // Капсулы сущностей: FlCapsuleA[8] (конец A + радиус), затем FlCapsuleB[8].
+        int capsulesBase = 80 + MAX_LIGHTS * 3 * 16 + 32;
+        for (int j = 0; j < capsules.size(); j++) {
+            float[] capsule = capsules.get(j);
+            SCRATCH.position(capsulesBase + j * 16);
+            SCRATCH.putFloat(capsule[0]).putFloat(capsule[1]).putFloat(capsule[2]).putFloat(capsule[3]);
+            SCRATCH.position(capsulesBase + MAX_CAPSULES * 16 + j * 16);
+            SCRATCH.putFloat(capsule[4]).putFloat(capsule[5]).putFloat(capsule[6]).putFloat(0);
         }
 
         SCRATCH.position(0).limit(UBO_SIZE);
         RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), SCRATCH);
         uboHasData = true;
         active = true;
+    }
+
+    /**
+     * Пытается занять слот источника в чанке позиции {@code pos}
+     * (не больше {@value #MAX_PER_CHUNK} на чанк за кадр).
+     */
+    private static boolean reserveChunkSlot(Vec3 pos) {
+        long key = net.minecraft.world.level.ChunkPos.pack(
+                (int) Math.floor(pos.x) >> 4, (int) Math.floor(pos.z) >> 4);
+        int used = CHUNK_SLOTS.getOrDefault(key, 0);
+        if (used >= MAX_PER_CHUNK) {
+            return false;
+        }
+        CHUNK_SLOTS.put(key, used + 1);
+        return true;
     }
 
     /** Подмена терраин-пайплайна на наш (или null, если не терраин). */
@@ -292,12 +376,20 @@ public final class FlashlightEngine {
                 .withColorTargetState(original.getColorTargetState())
                 .withDepthStencilState(java.util.Optional.ofNullable(original.getDepthStencilState()));
 
-        // Дефайны: значения (float/int) + флаги.
+        // Дефайны: значения (float/int) + флаги. Нечисловое значение (возможный
+        // строковый дефайн будущих версий/модов) не должно ронять весь клон —
+        // иначе свет фонаря молча гаснет для этого рендер-типа.
         original.getShaderDefines().values().forEach((key, value) -> {
-            if (value.contains(".")) {
-                builder.withShaderDefine(key, Float.parseFloat(value));
-            } else {
-                builder.withShaderDefine(key, Integer.parseInt(value));
+            try {
+                if (value.contains(".")) {
+                    builder.withShaderDefine(key, Float.parseFloat(value));
+                } else {
+                    builder.withShaderDefine(key, Integer.parseInt(value));
+                }
+            } catch (NumberFormatException e) {
+                dev.sivren.flashlight.Flashlight.LOGGER.warn(
+                        "Flashlight: пропущен нечисловой дефайн {}={} у {}",
+                        key, value, original.getLocation());
             }
         });
         original.getShaderDefines().flags().forEach(builder::withShaderDefine);
@@ -377,13 +469,78 @@ public final class FlashlightEngine {
                 net.minecraft.util.Mth.lerp(focus, 1.1f, 1.0f)};
     }
 
-    private static void addSphere(List<float[]> spheres, net.minecraft.world.phys.AABB box,
-                                  Vec3 cameraPos, double heightFraction, float radius) {
-        spheres.add(new float[]{
-                (float) ((box.minX + box.maxX) * 0.5 - cameraPos.x),
-                (float) (box.minY + box.getYsize() * heightFraction - cameraPos.y),
-                (float) ((box.minZ + box.maxZ) * 0.5 - cameraPos.z),
-                radius});
+    /**
+     * Капсулы-окклюдеры по сущности: {ax, ay, az, r, bx, by, bz} (camera-relative).
+     * Высоким — ДВЕ вертикальные (ноги тоньше + корпус толще): силуэт с
+     * перепадом ширины, а не «столб». Широким (паук) — горизонтальная вдоль тела.
+     */
+    private static void addCapsule(List<float[]> capsules,
+                                   net.minecraft.world.entity.LivingEntity living,
+                                   Vec3 cameraPos, float partialTick) {
+        net.minecraft.world.phys.AABB box = living.getBoundingBox();
+        float width = (float) box.getXsize();
+        float height = (float) box.getYsize();
+        float cx = (float) ((box.minX + box.maxX) * 0.5 - cameraPos.x);
+        float cz = (float) ((box.minZ + box.maxZ) * 0.5 - cameraPos.z);
+        float minY = (float) (box.minY - cameraPos.y);
+        if (height >= width * 1.15f) {
+            // Ноги: узкая капсула от земли до середины роста.
+            float rLegs = net.minecraft.util.Mth.clamp(width * 0.30f, 0.08f, 0.35f);
+            float split = minY + height * 0.5f;
+            capsules.add(new float[]{cx, minY + rLegs * 0.7f, cz, rLegs, cx, split, cz});
+            if (capsules.size() >= MAX_CAPSULES) {
+                return;
+            }
+            // Корпус + голова: толстая капсула от пояса до макушки.
+            float rBody = net.minecraft.util.Mth.clamp(width * 0.5f * 0.95f, 0.1f, 0.5f);
+            float top = minY + height - rBody * 0.85f;
+            capsules.add(new float[]{cx, split, cz, rBody, cx, Math.max(top, split), cz});
+        } else {
+            // Широкий моб: горизонтальная капсула вдоль поворота тела.
+            float r = net.minecraft.util.Mth.clamp(height * 0.5f * 0.9f, 0.1f, 0.6f);
+            float half = Math.max(width * 0.5f - r, 0.05f);
+            double yaw = Math.toRadians(net.minecraft.util.Mth.lerp(partialTick,
+                    living.yBodyRotO, living.yBodyRot));
+            float fx = (float) -Math.sin(yaw) * half;
+            float fz = (float) Math.cos(yaw) * half;
+            float cy = minY + height * 0.5f;
+            capsules.add(new float[]{cx - fx, cy, cz - fz, r, cx + fx, cy, cz + fz});
+        }
+    }
+
+    // ==================== Подавление ванильной blob-тени ====================
+
+    /** Луч фонаря в мировых координатах (для CPU-проверок вне шейдера). */
+    public record WorldBeam(Vec3 pos, Vec3 dir, float range, float cosOuter) {
+    }
+
+    private static volatile List<WorldBeam> worldBeams = List.of();
+
+    /**
+     * true, если сущность попадает в конус хотя бы одного горящего фонаря —
+     * тогда её ванильная blob-тень гасится (наша силуэтная тень главнее).
+     */
+    public static boolean beamTouches(net.minecraft.world.entity.Entity entity) {
+        List<WorldBeam> list = worldBeams;
+        if (list.isEmpty()) {
+            return false;
+        }
+        Vec3 center = entity.getBoundingBox().getCenter();
+        for (WorldBeam beam : list) {
+            Vec3 to = center.subtract(beam.pos());
+            double dist = to.length();
+            if (dist > beam.range()) {
+                continue;
+            }
+            if (dist < 2.0) {
+                return true;
+            }
+            // Запас к краю конуса, чтобы тень не мигала на границе луча.
+            if (to.scale(1.0 / dist).dot(beam.dir()) > beam.cosOuter() - 0.08) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static FlashlightItem litFlashlight(Player player) {
@@ -403,6 +560,9 @@ public final class FlashlightEngine {
         }
         return null;
     }
+
+    /** Параметры света шашки: {range, cosOuter, cosInner, -} — точечный (сфера). */
+    private static final float[] FLARE_PARAMS = {12.0f, -1.05f, -1.0f, 1.0f};
 
     /**
      * Позиция линзы фонаря: у руки, держащей фонарь (не «изо лба»).
@@ -433,9 +593,9 @@ public final class FlashlightEngine {
                 player.yBodyRotO, player.yBodyRot));
         Vec3 bodyForward = new Vec3(-Math.sin(bodyYaw), 0, Math.cos(bodyYaw));
         Vec3 bodyRight = new Vec3(-Math.cos(bodyYaw), 0, -Math.sin(bodyYaw));
-        return eye.add(bodyForward.scale(0.28))
-                .add(bodyRight.scale(0.4 * side))
-                .add(0, -0.5, 0);
+        return eye.add(bodyForward.scale(0.5))
+                .add(bodyRight.scale(0.38 * side))
+                .add(0, -0.75, 0);
     }
 
     private static void ensureResources() {

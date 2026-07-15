@@ -1,0 +1,18 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"pattern": [
+		"III",
+		"GCG",
+		"L L"
+	],
+	"key": {
+		"I": "minecraft:iron_ingot",
+		"G": "minecraft:glass_pane",
+		"C": "minecraft:golden_carrot",
+		"L": "minecraft:leather"
+	},
+	"result": {
+		"id": "flashlight:nvg",
+		"count": 1
+	}
+}

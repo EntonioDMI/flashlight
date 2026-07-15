@@ -9,6 +9,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 
@@ -16,11 +17,11 @@ import net.minecraft.world.item.Item;
 public final class ModItems {
 
     /**
-     * Фонарик-универсал: фокус линзы колёсиком (25 блоков широкий ↔ 150 узкий).
+     * Фонарик-универсал: фокус линзы колёсиком (25 блоков широкий ↔ 110 узкий).
      * Экономный: 1 заряд за 2 секунды — 30 минут на дешёвой AA.
      */
     public static final Item FLASHLIGHT = register("flashlight",
-            props -> new FlashlightItem(props, 900, 13, 150, false, 40, () -> ModItems.BATTERY_AA),
+            props -> new FlashlightItem(props, 900, 13, 110, false, 40, () -> ModItems.BATTERY_AA),
             new Item.Properties()
                     .stacksTo(1)
                     .component(ModComponents.CHARGE, 0)
@@ -44,6 +45,17 @@ public final class ModItems {
     public static final Item BATTERY_PACK = register("battery_pack", Item::new,
             new Item.Properties().stacksTo(16));
 
+    /** Прибор ночного видения — шлем (надевается ПКМ), тумблер клавишей, ест AA. */
+    public static final Item NVG = register("nvg", NvgItem::new,
+            new Item.Properties()
+                    .stacksTo(1)
+                    .component(ModComponents.CHARGE, 0)
+                    .equippable(EquipmentSlot.HEAD));
+
+    /** Сигнальная шашка: ПКМ поджигает, минута красного света и дыма, одноразовая. */
+    public static final Item SIGNAL_FLARE = register("signal_flare", FlareItem::new,
+            new Item.Properties().stacksTo(16));
+
     private ModItems() {
     }
 
@@ -53,6 +65,8 @@ public final class ModItems {
             output.accept(WORK_LANTERN);
             output.accept(BATTERY_AA);
             output.accept(BATTERY_PACK);
+            output.accept(NVG);
+            output.accept(SIGNAL_FLARE);
         });
     }
 

@@ -3,5 +3,13 @@
 	"item.flashlight.work_lantern": "Work Lantern",
 	"item.flashlight.battery_aa": "AA Battery",
 	"item.flashlight.battery_pack": "Battery Pack",
-	"key.flashlight.reload": "Reload Flashlight"
+	"item.flashlight.nvg": "Night Vision Goggles",
+	"item.flashlight.signal_flare": "Signal Flare",
+	"key.flashlight.reload": "Reload Flashlight",
+	"key.flashlight.nvg": "Toggle Night Vision Goggles",
+	"subtitles.flashlight.nvg_on": "Night vision powers up",
+	"subtitles.flashlight.nvg_off": "Night vision powers down",
+	"subtitles.flashlight.flashlight_click": "Flashlight clicks",
+	"subtitles.flashlight.focus_zoom": "Flashlight lens focuses",
+	"subtitles.flashlight.lantern_loop": "Lantern hums"
 }

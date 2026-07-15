@@ -39,6 +39,13 @@ public final class SodiumCompat {
     private static String flLightsSource;
     private static boolean warned = false;
 
+    /**
+     * Кэш по program id: {blockIndex, occluderLocation}. glGetUniform* — драйверные
+     * запросы, незачем гонять их каждый проход каждый кадр. Инвалидация — в
+     * {@link #patchShader} (Sodium пересобирает программы через перезагрузку исходников).
+     */
+    private static final java.util.HashMap<Integer, int[]> PROGRAM_CACHE = new java.util.HashMap<>();
+
     private SodiumCompat() {
     }
 
@@ -51,6 +58,7 @@ public final class SodiumCompat {
             return null;
         }
         if ("blocks/block_layer_opaque.vsh".equals(path)) {
+            PROGRAM_CACHE.clear(); // программы пересобираются — старые id недействительны
             return patchVertex(source);
         }
         if ("blocks/block_layer_opaque.fsh".equals(path)) {
@@ -105,21 +113,30 @@ public final class SodiumCompat {
      * блока FlashLights в программе нет и мы тихо выходим.
      */
     public static void setupTerrainProgram(int programId) {
-        int blockIndex = GL32C.glGetUniformBlockIndex(programId, "FlashLights");
-        if (blockIndex == GL32C.GL_INVALID_INDEX) {
+        // Локации и назначение binding-точек — состояние программы, делаем один раз.
+        int[] locations = PROGRAM_CACHE.computeIfAbsent(programId, id -> {
+            int blockIndex = GL32C.glGetUniformBlockIndex(id, "FlashLights");
+            int occluderLocation = GL32C.glGetUniformLocation(id, "FlOccluder");
+            if (blockIndex != GL32C.GL_INVALID_INDEX) {
+                GL32C.glUniformBlockBinding(id, blockIndex, UBO_BINDING);
+            }
+            if (occluderLocation >= 0) {
+                GL32C.glUniform1i(occluderLocation, OCCLUDER_UNIT);
+            }
+            return new int[]{blockIndex, occluderLocation};
+        });
+        if (locations[0] == GL32C.GL_INVALID_INDEX) {
             return;
         }
         GpuBuffer ubo = FlashlightEngine.uboForCompat();
         if (ubo == null) {
             return;
         }
-        GL32C.glUniformBlockBinding(programId, blockIndex, UBO_BINDING);
+        // Привязки binding-точек — глобальное GL-состояние, обновляем каждый проход.
         GL32C.glBindBufferRange(GL32C.GL_UNIFORM_BUFFER, UBO_BINDING,
                 ((GlBufferAccessor) ubo).flashlight$getHandle(), 0, ubo.size());
 
-        int occluderLocation = GL32C.glGetUniformLocation(programId, "FlOccluder");
-        if (occluderLocation >= 0 && VoxelOccluder.texture() instanceof GlTexture glTexture) {
-            GL32C.glUniform1i(occluderLocation, OCCLUDER_UNIT);
+        if (locations[1] >= 0 && VoxelOccluder.texture() instanceof GlTexture glTexture) {
             GlStateManager._activeTexture(GL32C.GL_TEXTURE0 + OCCLUDER_UNIT);
             GlStateManager._bindTexture(glTexture.glId());
             GlStateManager._activeTexture(GL32C.GL_TEXTURE0);

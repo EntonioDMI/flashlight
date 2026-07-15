@@ -3,5 +3,13 @@
 	"item.flashlight.work_lantern": "Рабочий фонарь",
 	"item.flashlight.battery_aa": "Пальчиковая батарейка",
 	"item.flashlight.battery_pack": "Аккумулятор",
-	"key.flashlight.reload": "Перезарядить фонарь"
+	"item.flashlight.nvg": "Прибор ночного видения",
+	"item.flashlight.signal_flare": "Сигнальная шашка",
+	"key.flashlight.reload": "Перезарядить фонарь",
+	"key.flashlight.nvg": "Переключить прибор ночного видения",
+	"subtitles.flashlight.nvg_on": "ПНВ включается",
+	"subtitles.flashlight.nvg_off": "ПНВ выключается",
+	"subtitles.flashlight.flashlight_click": "Щелчок фонарика",
+	"subtitles.flashlight.focus_zoom": "Фокусировка линзы",
+	"subtitles.flashlight.lantern_loop": "Фонарь гудит"
 }

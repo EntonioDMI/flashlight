@@ -26,9 +26,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ItemInHandRenderer.class)
 public class ItemInHandRendererMixin {
 
-    /** Плавность: 0 — обычная поза, 1 — полностью прижат. Лерпается по кадрам. */
+    /**
+     * Плавность на КАЖДУЮ руку (метод зовётся дважды за кадр — по разу на руку;
+     * общий лерп дёргался бы между таргетами рук): 0 — обычная поза, 1 — прижат.
+     */
     @Unique
-    private float flashlight$reloadLerp = 0.0f;
+    private final float[] flashlight$reloadLerp = new float[2];
+    @Unique
+    private final long[] flashlight$lastNanos = new long[2];
 
     @Inject(
             method = "renderArmWithItem",
@@ -43,10 +48,19 @@ public class ItemInHandRendererMixin {
         boolean reloading = itemStack.getItem() instanceof FlashlightItem
                 && FlashlightItem.isReloading(itemStack);
 
-        // Плавный вход/выход из позы (~5 кадров).
+        // Плавный вход/выход из позы: экспоненциальное сглаживание по реальному
+        // времени (тау ~75 мс) — одинаковая скорость на любом FPS.
+        int handIndex = hand == InteractionHand.MAIN_HAND ? 0 : 1;
+        long now = System.nanoTime();
+        float dt = flashlight$lastNanos[handIndex] == 0
+                ? 0.016f
+                : Math.min((now - flashlight$lastNanos[handIndex]) / 1.0e9f, 0.1f);
+        flashlight$lastNanos[handIndex] = now;
+
         float target = reloading ? 1.0f : 0.0f;
-        flashlight$reloadLerp += (target - flashlight$reloadLerp) * 0.2f;
-        float t = flashlight$reloadLerp;
+        float alpha = 1.0f - (float) Math.exp(-dt / 0.075f);
+        flashlight$reloadLerp[handIndex] += (target - flashlight$reloadLerp[handIndex]) * alpha;
+        float t = flashlight$reloadLerp[handIndex];
         if (t < 0.01f) {
             return;
         }

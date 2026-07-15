@@ -3,7 +3,6 @@ package dev.sivren.flashlight;
 import java.util.function.Supplier;
 
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
@@ -115,7 +114,9 @@ public class FlashlightItem extends Item {
         int charge = charge(stack);
         if (charge <= 0) {
             stack.remove(ModComponents.ON);
-        } else if (level.getGameTime() % drainIntervalTicks == 0L) {
+        } else if (level.getGameTime() % drainIntervalTicks == 0L
+                && !(owner instanceof Player player && player.getAbilities().instabuild)) {
+            // В креативе заряд не тратится.
             stack.set(ModComponents.CHARGE, charge - 1);
         }
     }
@@ -137,6 +138,6 @@ public class FlashlightItem extends Item {
     }
 
     private static void click(Level level, Player player, float pitch) {
-        level.playSound(null, player.blockPosition(), SoundEvents.LEVER_CLICK, SoundSource.PLAYERS, 0.35f, pitch);
+        level.playSound(null, player.blockPosition(), ModSounds.FLASHLIGHT_CLICK, SoundSource.PLAYERS, 0.5f, pitch);
     }
 }

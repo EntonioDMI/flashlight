@@ -25,7 +25,6 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
@@ -48,18 +47,25 @@ import org.joml.Vector4f;
  */
 public final class GlareRenderer {
 
-    public static final Identifier TEXTURE =
-            Identifier.fromNamespaceAndPath("flashlight", "textures/misc/glare.png");
-
+    /** Точка на линзе: ванильная проекция + наш процедурный круглый блик. */
     private static final RenderPipeline DOT_PIPELINE = RenderPipeline.builder(
                     RenderPipelines.MATRICES_PROJECTION_SNIPPET)
             .withLocation(Identifier.fromNamespaceAndPath("flashlight", "pipeline/glare_dot"))
             .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/position_tex_color"))
-            .withFragmentShader(Identifier.fromNamespaceAndPath("minecraft", "core/position_tex_color"))
-            .withSampler("Sampler0")
+            .withFragmentShader(Identifier.fromNamespaceAndPath("flashlight", "core/fl_glare"))
             .withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)
             .withColorTargetState(new ColorTargetState(BlendFunction.LIGHTNING))
             .withDepthStencilState(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, false))
+            .build();
+
+    /** Экранный ореол ослепления: NDC-квад, целиком процедурный (без текстуры). */
+    private static final RenderPipeline HALO_PIPELINE = RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath("flashlight", "pipeline/glare_halo"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("flashlight", "core/fl_glare"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath("flashlight", "core/fl_glare"))
+            .withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)
+            .withCull(false)
+            .withColorTargetState(new ColorTargetState(BlendFunction.LIGHTNING))
             .build();
 
     // Публикуется для HUD-вспышки (читает FlashBlindOverlay).
@@ -70,6 +76,13 @@ public final class GlareRenderer {
     private static boolean compiled = false;
 
     private GlareRenderer() {
+    }
+
+    /** Сброс при выходе из мира (DISCONNECT в FlashlightClient). */
+    public static void reset() {
+        blindStrength = 0;
+        blindScreenX = 0.5f;
+        blindScreenY = 0.5f;
     }
 
     private static float smoothstep(float edge0, float edge1, float x) {
@@ -84,6 +97,20 @@ public final class GlareRenderer {
         float bestX = 0.5f;
         float bestY = 0.5f;
         if (mc.level == null || mc.player == null) {
+            blindStrength = 0;
+            return;
+        }
+        // Быстрый выход: блик считается только для чужих фонарей (и своего в F5).
+        // Одиночная игра от первого лица — самый частый случай, ноль работы.
+        boolean anySource = false;
+        for (Player player : mc.level.players()) {
+            if (FlashlightEngine.litStack(player) != null
+                    && !(player == mc.player && mc.options.getCameraType().isFirstPerson())) {
+                anySource = true;
+                break;
+            }
+        }
+        if (!anySource) {
             blindStrength = 0;
             return;
         }
@@ -189,10 +216,7 @@ public final class GlareRenderer {
             return;
         }
 
-        if (!compiled) {
-            RenderSystem.getDevice().precompilePipeline(DOT_PIPELINE);
-            compiled = true;
-        }
+        ensurePipelines();
 
         try (mesh; byteSource) {
             GpuBuffer vertices = DOT_PIPELINE.getVertexFormat().uploadImmediateVertexBuffer(mesh.vertexBuffer());
@@ -202,7 +226,6 @@ public final class GlareRenderer {
             GpuBufferSlice dynamicTransforms = RenderSystem.getDynamicUniforms().writeTransform(
                     new Matrix4f(modelViewMatrix), new Vector4f(1, 1, 1, 1),
                     new Vector3f(), new Matrix4f());
-            AbstractTexture texture = mc.getTextureManager().getTexture(TEXTURE);
             RenderTarget target = mc.getMainRenderTarget();
             CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
             try (RenderPass pass = encoder.createRenderPass(() -> "Flashlight glare dot",
@@ -211,11 +234,83 @@ public final class GlareRenderer {
                 pass.setPipeline(DOT_PIPELINE);
                 RenderSystem.bindDefaultUniforms(pass);
                 pass.setUniform("DynamicTransforms", dynamicTransforms);
-                pass.bindTexture("Sampler0", texture.getTextureView(), texture.getSampler());
                 pass.setVertexBuffer(0, vertices);
                 pass.setIndexBuffer(indices, autoIndices.type());
                 pass.drawIndexed(0, 0, mesh.drawState().indexCount(), 1);
             }
+        }
+    }
+
+    /**
+     * Экранный ореол ослепления: процедурный круг с гауссовым ядром, центр —
+     * в спроецированной точке линзы. Рисуется поверх мира и руки, под GUI.
+     * Через включённый ПНВ вспышка зелёная и заметно злее (трубка сатурирует).
+     */
+    public static void drawBlindHalo(float strength) {
+        Minecraft mc = Minecraft.getInstance();
+        boolean nvg = mc.player != null && dev.sivren.flashlight.NvgItem.isLit(
+                mc.player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD));
+        float alpha = Math.clamp(strength * (nvg ? 2.8f : 2.0f), 0.0f, 1.0f);
+        if (nvg) {
+            drawScreenHalo(blindScreenX, blindScreenY, 0.7f + 3.2f * strength, 0.62f, 1.0f, 0.66f, alpha);
+        } else {
+            drawScreenHalo(blindScreenX, blindScreenY, 0.7f + 3.2f * strength, 1.0f, 0.95f, 0.86f, alpha);
+        }
+    }
+
+    /**
+     * Процедурный ореол на экране: центр в нормированных координатах (0..1,
+     * верх-лево), halfY — полувысота в NDC, квад квадратный в пикселях.
+     */
+    private static void drawScreenHalo(float centerX, float centerY, float halfY,
+                                       float r, float g, float b, float alpha) {
+        if (alpha < 0.02f) {
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        RenderTarget target = mc.getMainRenderTarget();
+        if (target == null) {
+            return;
+        }
+        ensurePipelines();
+
+        float cx = centerX * 2.0f - 1.0f;
+        float cy = -(centerY * 2.0f - 1.0f);
+        float halfX = halfY * ((float) target.height / (float) target.width);
+
+        try (ByteBufferBuilder bytes = new ByteBufferBuilder(512)) {
+            BufferBuilder builder = new BufferBuilder(bytes, VertexFormat.Mode.QUADS,
+                    DefaultVertexFormat.POSITION_TEX_COLOR);
+            builder.addVertex(cx - halfX, cy - halfY, 0).setUv(0, 1).setColor(r, g, b, alpha);
+            builder.addVertex(cx + halfX, cy - halfY, 0).setUv(1, 1).setColor(r, g, b, alpha);
+            builder.addVertex(cx + halfX, cy + halfY, 0).setUv(1, 0).setColor(r, g, b, alpha);
+            builder.addVertex(cx - halfX, cy + halfY, 0).setUv(0, 0).setColor(r, g, b, alpha);
+            try (MeshData mesh = builder.build()) {
+                if (mesh == null) {
+                    return;
+                }
+                GpuBuffer vertices = HALO_PIPELINE.getVertexFormat()
+                        .uploadImmediateVertexBuffer(mesh.vertexBuffer());
+                RenderSystem.AutoStorageIndexBuffer autoIndices =
+                        RenderSystem.getSequentialBuffer(VertexFormat.Mode.QUADS);
+                GpuBuffer indices = autoIndices.getBuffer(mesh.drawState().indexCount());
+                CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+                try (RenderPass pass = encoder.createRenderPass(() -> "Flashlight blind halo",
+                        target.getColorTextureView(), OptionalInt.empty())) {
+                    pass.setPipeline(HALO_PIPELINE);
+                    pass.setVertexBuffer(0, vertices);
+                    pass.setIndexBuffer(indices, autoIndices.type());
+                    pass.drawIndexed(0, 0, mesh.drawState().indexCount(), 1);
+                }
+            }
+        }
+    }
+
+    private static void ensurePipelines() {
+        if (!compiled) {
+            RenderSystem.getDevice().precompilePipeline(DOT_PIPELINE);
+            RenderSystem.getDevice().precompilePipeline(HALO_PIPELINE);
+            compiled = true;
         }
     }
 

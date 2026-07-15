@@ -1,0 +1,22 @@
+{
+	"nvg_on": {
+		"subtitle": "subtitles.flashlight.nvg_on",
+		"sounds": [{"name": "flashlight:nvg_on"}]
+	},
+	"nvg_off": {
+		"subtitle": "subtitles.flashlight.nvg_off",
+		"sounds": [{"name": "flashlight:nvg_off"}]
+	},
+	"flashlight_click": {
+		"subtitle": "subtitles.flashlight.flashlight_click",
+		"sounds": [{"name": "flashlight:flashlight_click"}]
+	},
+	"focus_zoom": {
+		"subtitle": "subtitles.flashlight.focus_zoom",
+		"sounds": [{"name": "flashlight:focus_zoom"}]
+	},
+	"lantern_loop": {
+		"subtitle": "subtitles.flashlight.lantern_loop",
+		"sounds": [{"name": "flashlight:lantern_loop", "stream": true}]
+	}
+}
