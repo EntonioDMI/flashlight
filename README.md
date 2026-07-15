@@ -21,13 +21,22 @@ Every flashlight mod does the same trick: invisible light blocks chasing your cr
 |  | 🔦 Flashlight | 💡 Work Lantern |
 | --- | --- | --- |
 | Role | cheap all-rounder | expensive floodlight |
-| Beam | **scroll to focus the lens**: wide 25-block flood ↔ razor-thin **150-block** spot | fixed ~40° wall of light, 55 blocks |
+| Beam | **scroll to focus the lens**: wide 25-block flood ↔ razor-thin **110-block** spot | fixed ~40° wall of light, 55 blocks |
 | Power | AA battery — 30 min | battery pack — 45 min |
 | Recipe | iron + redstone + glass | gold, iron, redstone block |
+| Loot | villages (+ AA batteries) | dungeons, mineshafts, strongholds (+ battery packs) |
 
 - **Right-click** — on/off. **R** — slam a fresh battery in, gun-reload style, with a chest-pull animation.
-- **Mouse wheel** (flashlight on) — zoom the lens: floodlight for corridors, sniper beam for scouting.
+- **Mouse wheel** (flashlight on, either hand) — zoom the lens: floodlight for corridors, sniper beam for scouting.
 - Batteries are consumables. Below 20% charge the beam visibly dies — reload or walk in the dark.
+
+<img src="images/divider-beam.png" alt="" width="100%">
+
+## ✦ Night ops
+
+- **🥽 Night Vision Goggles** — worn on the head, toggled with **G**. A real image-intensifier tube: ~3 s warm-up synced to the power-on sound, film grain, scanlines, and *honest* overexposure — daylight, torches or a flashlight beam burn out to pale green per-pixel. Runs 30 min on an AA battery, hot-swapped with the same key. Craft-only — no loot.
+- **🧨 Signal Flare** — hold right-click to wind up, release to throw in an arc (~35 blocks). Lands, burns for 60 s with a flickering red point light from the same engine and a column of red smoke. Single-use, can't be extinguished.
+- **🔊 Sounds** — flashlight click, lens zoom, NVG on/off whine, the low hum of a running work lantern. Subtitled (en/ru).
 
 <img src="images/divider-batteries.png" alt="" width="100%">
 
@@ -37,8 +46,8 @@ No light blocks. No chunk relights. The cone is computed **inside the game's cor
 
 - **Instant** — the light moves the frame you move, with a subtle hand-lag inertia like a real torch.
 - **Honest** — light is `albedo × cone`: real textures, real colours, zero noise, works in absolute darkness.
-- **Blocked by walls** — a 48³ voxel map around the camera is ray-marched (DDA) per pixel; soft penumbra from three jittered rays, entities cast soft sphere shadows, and the beam *dissolves* vanilla shadow circles it hits.
-- **Multiplayer-native** — up to four beams at once; everyone sees everyone's light, zoom level included.
+- **Blocked by walls** — a 48³ voxel map around the camera is ray-marched (DDA) per pixel, rescanning only blocks that actually changed. Soft penumbra from a five-ray lens disk (dropping to one ray past ~25 blocks, where the penumbra is subpixel anyway), entities cast sharp capsule-silhouette shadows with PCSS edges, and the beam *dissolves* vanilla shadow circles it hits.
+- **Multiplayer-native** — up to 32 sources at once, capped at 4 per chunk so a crowd in one spot never starves light elsewhere; everyone sees everyone's light, zoom level included.
 - **Blinding** — glare is physics, not a sprite: its strength equals the actual cone intensity at *your* eyes, traced past blocks and mobs. Look into a lens up close and the screen whites out.
 - **Sodium-ready** — with Sodium installed the beam is injected straight into its terrain shaders. Same light, same shadows, Sodium speed.
 
